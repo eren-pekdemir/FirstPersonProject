@@ -1,12 +1,12 @@
-#include "Public/UI/InteractPromptWidget.h"
-#include "Components/TextBlock.h"
-#include "Blueprint/WidgetTree.h"
+#include "UI/InteractPromptWidget.h"
 
-void UInteractPromptWidget::SetPromptText(const FText& InText)
+#include "Blueprint/WidgetTree.h"
+#include "Components/TextBlock.h"
+
+void UInteractPromptWidget::NativeOnInitialized()
 {
-	// BindWidgetOptional ismi WBP'deki TextBlock ile eşleşmediyse (örn. yazım
-	// hatası), ağaçtaki ilk TextBlock'u otomatik bul ki widget sessizce
-	// çalışmaz hale gelmesin.
+	Super::NativeOnInitialized();
+
 	if (!PromptText && WidgetTree)
 	{
 		WidgetTree->ForEachWidget([this](UWidget* Widget)
@@ -17,7 +17,10 @@ void UInteractPromptWidget::SetPromptText(const FText& InText)
 			}
 		});
 	}
+}
 
+void UInteractPromptWidget::SetPromptText(const FText& InText)
+{
 	if (PromptText)
 	{
 		PromptText->SetText(InText);

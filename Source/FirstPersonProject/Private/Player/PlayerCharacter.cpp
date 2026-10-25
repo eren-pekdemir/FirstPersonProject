@@ -1,11 +1,20 @@
-﻿#include "Public/Player/PlayerCharacter.h"
-#include "EnhancedInputComponent.h"
-#include "InputActionValue.h"
-#include "GameFramework/CharacterMovementComponent.h"
-#include "Public/Gun/GunBase.h"
-#include "Public/Data/WeaponDataAsset.h"
-#include "Public/UI/InteractPromptWidget.h"
+﻿#include "Player/PlayerCharacter.h"
+
 #include "Blueprint/UserWidget.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Data/WeaponDataAsset.h"
+#include "EnhancedInputComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
+#include "Gun/GunBase.h"
+#include "InputActionValue.h"
+#include "UI/InteractPromptWidget.h"
+
+namespace PlayerCharacter
+{
+	/** Speed tolerance above WalkSpeed under which the character counts as no longer sprinting */
+	constexpr float FireSpeedTolerance = 50.f;
+}
 
 APlayerCharacter::APlayerCharacter()
 {
@@ -20,173 +29,218 @@ void APlayerCharacter::BeginPlay()
 
 	if (DefaultGun)
 	{
-		FActorSpawnParameters SpawnInfo;
-		SpawnInfo.Owner = this;
-		SpawnInfo.Instigator = GetInstigator();
-		AGunBase* SpawnedGun = GetWorld()->SpawnActor<AGunBase>(DefaultGun, FVector::ZeroVector, FRotator::ZeroRotator, SpawnInfo);
-		EquipGun(SpawnedGun);
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.Instigator = this;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		EquipGun(GetWorld()->SpawnActor<AGunBase>(DefaultGun, GetActorTransform(), SpawnParams));
 	}
 
 	if (IsLocallyControlled())
 	{
-		if (CrosshairWidgetClass)
-		{
-			CrosshairWidget = CreateWidget<UUserWidget>(GetWorld(), CrosshairWidgetClass);
-			if (CrosshairWidget)
-			{
-				CrosshairWidget->AddToViewport();
-			}
-		}
-
-		if (InteractPromptWidgetClass)
-		{
-			InteractPromptWidget = CreateWidget<UInteractPromptWidget>(GetWorld(), InteractPromptWidgetClass);
-			if (InteractPromptWidget)
-			{
-				InteractPromptWidget->AddToViewport();
-				InteractPromptWidget->SetVisibility(ESlateVisibility::Collapsed);
-			}
-		}
+		CreateHUDWidgets();
 	}
+}
+
+void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	StopFiring();
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Ateş niyeti varsa sprint bastırılır → yürüme hızına in
-	const bool bSprinting = bIsSprinting && !bWantsToFire;
-	const float TargetSpeed = bSprinting ? SprintSpeed : WalkSpeed;
-	GetCharacterMovement()->MaxWalkSpeed = FMath::FInterpTo(
-		GetCharacterMovement()->MaxWalkSpeed, TargetSpeed, DeltaTime, SprintInterpSpeed);
-
-	// Koşmuyorken (yürüme hızına indiyse) ateşe başla
-	if (bWantsToFire && !bIsFiring && CurrentGun)
-	{
-		const bool bAtWalkSpeed = GetVelocity().Size() <= WalkSpeed + 50.f;
-		if (bAtWalkSpeed)
-		{
-			APlayerController* PC = Cast<APlayerController>(GetController());
-			CurrentGun->StartFire(PC);
-			bIsFiring = true;
-		}
-	}
+	UpdateMovementAndFiring(DeltaTime);
 
 	if (IsLocallyControlled())
 	{
 		UpdateInteractTrace();
 	}
 }
+
 void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent);
-	if (!EIC) return;
-
-	if (MoveAction)
-		EIC->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Move);
-
-	if (LookAction)
-		EIC->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
-
-	if (FireAction)
-	{
-		EIC->BindAction(FireAction, ETriggerEvent::Started, this, &APlayerCharacter::OnFirePressed);
-		EIC->BindAction(FireAction, ETriggerEvent::Completed, this, &APlayerCharacter::OnFireReleased);
-	}
-
-	if (SprintAction)
-	{
-		EIC->BindAction(SprintAction, ETriggerEvent::Started, this, &APlayerCharacter::SprintStart);
-		EIC->BindAction(SprintAction, ETriggerEvent::Completed, this, &APlayerCharacter::SprintEnd);
-	}
-
-	if (InteractAction)
-	{
-		EIC->BindAction(InteractAction, ETriggerEvent::Started, this, &APlayerCharacter::OnInteractPressed);
-	}
-}
-
-void APlayerCharacter::Move(const FInputActionValue& Value)
-{
-	
-	FVector2D MovementVector = Value.Get<FVector2D>();
-	
-	const FRotator Rotation = Controller->GetControlRotation();
-	const FRotator YawRotation(0, Rotation.Yaw, 0);
-	
-	const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-	const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
-	
-	AddMovementInput(ForwardDirection, MovementVector.Y);
-	
-	AddMovementInput(RightDirection, MovementVector.X);
-}
-
-void APlayerCharacter::Look(const FInputActionValue& Value)
-{
-	FVector2D LookAxisVector = Value.Get<FVector2D>();
-
-	if (GetController())
-	{
-		AddControllerYawInput(LookAxisVector.X);
-		AddControllerPitchInput(LookAxisVector.Y);
-	}
-}
-
-void APlayerCharacter::OnFirePressed()
-{
-    bWantsToFire = true;
-}
-
-void APlayerCharacter::OnFireReleased()
-{
-	 bWantsToFire = false;
-        if (CurrentGun && bIsFiring)
-        {
-            CurrentGun->StopFire();
-            bIsFiring = false;
-        }
-}
-
-void APlayerCharacter::SprintStart() { bIsSprinting = true; }
-void APlayerCharacter::SprintEnd()   { bIsSprinting = false; }
-
-void APlayerCharacter::UpdateInteractTrace()
-{
-	APlayerController* PC = Cast<APlayerController>(GetController());
-	if (!PC) return;
-
-	int32 SizeX, SizeY;
-	PC->GetViewportSize(SizeX, SizeY);
-
-	FVector WorldLocation, WorldDirection;
-	if (!PC->DeprojectScreenPositionToWorld(SizeX * 0.5f, SizeY * 0.5f, WorldLocation, WorldDirection))
+	UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent);
+	if (!EnhancedInput)
 	{
 		return;
 	}
 
-	const FVector TraceEnd = WorldLocation + WorldDirection * InteractTraceDistance;
+	if (MoveAction)
+	{
+		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Move);
+	}
 
-	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(this);
+	if (LookAction)
+	{
+		EnhancedInput->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
+	}
+
+	if (FireAction)
+	{
+		EnhancedInput->BindAction(FireAction, ETriggerEvent::Started, this, &APlayerCharacter::OnFirePressed);
+		EnhancedInput->BindAction(FireAction, ETriggerEvent::Completed, this, &APlayerCharacter::OnFireReleased);
+	}
+
+	if (SprintAction)
+	{
+		EnhancedInput->BindAction(SprintAction, ETriggerEvent::Started, this, &APlayerCharacter::OnSprintPressed);
+		EnhancedInput->BindAction(SprintAction, ETriggerEvent::Completed, this, &APlayerCharacter::OnSprintReleased);
+	}
+
+	if (InteractAction)
+	{
+		EnhancedInput->BindAction(InteractAction, ETriggerEvent::Started, this, &APlayerCharacter::OnInteractPressed);
+	}
+}
+
+void APlayerCharacter::CreateHUDWidgets()
+{
+	APlayerController* PlayerController = GetController<APlayerController>();
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	if (CrosshairWidgetClass)
+	{
+		CrosshairWidget = CreateWidget<UUserWidget>(PlayerController, CrosshairWidgetClass);
+		if (CrosshairWidget)
+		{
+			CrosshairWidget->AddToViewport();
+		}
+	}
+
+	if (InteractPromptWidgetClass)
+	{
+		InteractPromptWidget = CreateWidget<UInteractPromptWidget>(PlayerController, InteractPromptWidgetClass);
+		if (InteractPromptWidget)
+		{
+			InteractPromptWidget->AddToViewport();
+			InteractPromptWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+}
+
+// -------------------------------------------------------------------------------------------------
+// Movement
+
+void APlayerCharacter::Move(const FInputActionValue& Value)
+{
+	if (!Controller)
+	{
+		return;
+	}
+
+	const FVector2D Input = Value.Get<FVector2D>();
+	const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
+	const FRotationMatrix YawMatrix(YawRotation);
+
+	AddMovementInput(YawMatrix.GetUnitAxis(EAxis::X), Input.Y);
+	AddMovementInput(YawMatrix.GetUnitAxis(EAxis::Y), Input.X);
+}
+
+void APlayerCharacter::Look(const FInputActionValue& Value)
+{
+	const FVector2D Input = Value.Get<FVector2D>();
+
+	AddControllerYawInput(Input.X);
+	AddControllerPitchInput(Input.Y);
+}
+
+void APlayerCharacter::UpdateMovementAndFiring(float DeltaTime)
+{
+	// Holding the trigger cancels the sprint
+	const bool bSprinting = bWantsToSprint && !bWantsToFire;
+	const float TargetSpeed = bSprinting ? SprintSpeed : WalkSpeed;
+
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	Movement->MaxWalkSpeed = FMath::FInterpTo(Movement->MaxWalkSpeed, TargetSpeed, DeltaTime, SprintInterpSpeed);
+
+	// Weapons can't be fired at sprint speed: wait until the character has slowed down
+	if (bWantsToFire && !bIsFiring && CurrentGun)
+	{
+		if (GetVelocity().Size() <= WalkSpeed + PlayerCharacter::FireSpeedTolerance)
+		{
+			CurrentGun->StartFire();
+			bIsFiring = true;
+		}
+	}
+}
+
+// -------------------------------------------------------------------------------------------------
+// Firing
+
+void APlayerCharacter::OnFirePressed()
+{
+	bWantsToFire = true;
+}
+
+void APlayerCharacter::OnFireReleased()
+{
+	bWantsToFire = false;
+	StopFiring();
+}
+
+void APlayerCharacter::StopFiring()
+{
+	if (CurrentGun && bIsFiring)
+	{
+		CurrentGun->StopFire();
+	}
+
+	bIsFiring = false;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Interaction
+
+void APlayerCharacter::UpdateInteractTrace()
+{
+	const APlayerController* PlayerController = GetController<APlayerController>();
+	if (!PlayerController)
+	{
+		return;
+	}
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+
+	const FVector TraceEnd = ViewLocation + ViewRotation.Vector() * InteractTraceDistance;
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(InteractTrace), false, this);
 
 	FHitResult Hit;
-	GetWorld()->LineTraceSingleByChannel(Hit, WorldLocation, TraceEnd, ECC_Visibility, Params);
+	GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, TraceEnd, ECC_Visibility, Params);
 
-	AGunBase* HitGun = Cast<AGunBase>(Hit.GetActor());
+	SetFocusedGun(Cast<AGunBase>(Hit.GetActor()));
+}
 
-	if (HitGun == FocusedGun) return;
+void APlayerCharacter::SetFocusedGun(AGunBase* NewFocusedGun)
+{
+	if (NewFocusedGun == FocusedGun)
+	{
+		return;
+	}
 
-	FocusedGun = HitGun;
+	FocusedGun = NewFocusedGun;
 
-	if (!InteractPromptWidget) return;
+	if (!InteractPromptWidget)
+	{
+		return;
+	}
 
 	if (FocusedGun)
 	{
-		InteractPromptWidget->SetPromptText(FocusedGun->PickupPromptText);
-		InteractPromptWidget->SetVisibility(ESlateVisibility::Visible);
+		InteractPromptWidget->SetPromptText(FocusedGun->GetPickupPromptText());
+		InteractPromptWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
 	else
 	{
@@ -202,55 +256,63 @@ void APlayerCharacter::OnInteractPressed()
 	}
 }
 
+// -------------------------------------------------------------------------------------------------
+// Weapon handling
+
 void APlayerCharacter::EquipGun(AGunBase* NewGun)
 {
-	if (!NewGun || NewGun == CurrentGun) return;
-
-	const FTransform PickupTransform = NewGun->GetActorTransform();
+	if (!NewGun || NewGun == CurrentGun)
+	{
+		return;
+	}
 
 	if (CurrentGun)
 	{
-		if (CurrentGun->WeaponDataAsset && CurrentGun->WeaponDataAsset->AnimLayerClass)
-		{
-			GetMesh()->UnlinkAnimClassLayers(CurrentGun->WeaponDataAsset->AnimLayerClass);
-		}
-
-		// Eldeki silahı, yeni silahın bulunduğu yere bırak (swap)
-		CurrentGun->SetOwner(nullptr);   // bırakılan silahın sahipliğini kaldır
-		CurrentGun->SetHeld(false);
-		CurrentGun->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-		CurrentGun->SetActorTransform(PickupTransform);
+		DropCurrentGun(NewGun->GetActorTransform());
 	}
+
+	SetFocusedGun(nullptr);
 
 	CurrentGun = NewGun;
-	FocusedGun = nullptr;
 
-	if (InteractPromptWidget)
-	{
-		InteractPromptWidget->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	const FName SocketName = CurrentGun->WeaponDataAsset ? CurrentGun->WeaponDataAsset->AttachSocketName : FName("WeaponSocket");
-
-	// KRİTİK: silahın sahibini bu karaktere ata.
-	// Recoil (UpdateRecoil/ApplyRecoil) GetOwner() üzerinden çalışıyor;
-	// bu satır olmadan yerden alınan silahta Owner null kalır ve recoil çalışmaz.
+	// Recoil and spread read the owner, so it must be set before the gun is used
 	CurrentGun->SetOwner(this);
 	CurrentGun->SetInstigator(this);
-
 	CurrentGun->SetHeld(true);
-	CurrentGun->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetIncludingScale, SocketName);
 
-	if (CurrentGun->WeaponDataAsset)
+	const UWeaponDataAsset* WeaponData = CurrentGun->GetWeaponData();
+	const FName AttachSocket = WeaponData ? WeaponData->AttachSocketName : FName(TEXT("WeaponSocket"));
+	CurrentGun->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetIncludingScale, AttachSocket);
+
+	if (WeaponData)
 	{
-		if (CurrentGun->WeaponDataAsset->AnimLayerClass)
+		if (WeaponData->AnimLayerClass)
 		{
-			GetMesh()->LinkAnimClassLayers(CurrentGun->WeaponDataAsset->AnimLayerClass);
+			GetMesh()->LinkAnimClassLayers(WeaponData->AnimLayerClass);
 		}
 
-		if (CurrentGun->WeaponDataAsset->EquipMontage)
+		PlayAnimMontage(WeaponData->EquipMontage);
+	}
+
+}
+
+void APlayerCharacter::DropCurrentGun(const FTransform& DropTransform)
+{
+	StopFiring();
+
+	if (const UWeaponDataAsset* WeaponData = CurrentGun->GetWeaponData())
+	{
+		if (WeaponData->AnimLayerClass)
 		{
-			PlayAnimMontage(CurrentGun->WeaponDataAsset->EquipMontage);
+			GetMesh()->UnlinkAnimClassLayers(WeaponData->AnimLayerClass);
 		}
 	}
+
+	CurrentGun->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	CurrentGun->SetActorTransform(DropTransform);
+	CurrentGun->SetHeld(false);
+	CurrentGun->SetOwner(nullptr);
+	CurrentGun->SetInstigator(nullptr);
+
+	CurrentGun = nullptr;
 }
