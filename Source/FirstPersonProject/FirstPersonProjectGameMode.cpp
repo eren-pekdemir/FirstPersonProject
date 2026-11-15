@@ -2,7 +2,9 @@
 
 #include "FirstPersonProjectGameMode.h"
 
+#include "UI/ShooterHUD.h"
+
 AFirstPersonProjectGameMode::AFirstPersonProjectGameMode()
 {
-	// stub
+	HUDClass = AShooterHUD::StaticClass();
 }
