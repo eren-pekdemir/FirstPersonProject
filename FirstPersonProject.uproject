@@ -33,6 +33,11 @@
 		{
 			"Name": "AnimationLocomotionLibrary",
 			"Enabled": true
+		},
+		{
+			"Name": "EngineWire",
+			"Enabled": true,
+			"Optional": true
 		}
 	]
 }
