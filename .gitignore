@@ -25,3 +25,41 @@ Plugins/**/Intermediate/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local MCP connection (contains the capability token)
+.mcp.json
+
+# EngineWire: optional local editor MCP plugin, installed separately
+Plugins/EngineWire/
+
+# Third party packs. The Fab license does not allow sharing their source files in a public repository;
+# add them to your own project from Fab (list in README.md).
+/Content/1CPP/
+/Content/DynamicFPS/Blueprints/
+/Content/DynamicFPS/Sounds/
+/Content/Fab/Model_12_Pump_Action_Shotgun_Free_Standard/
+/Content/FirstPersonRifleAnimations/
+/Content/FootstepsMiniPack/
+/Content/FreeWeaponSFX/
+/Content/HealthDamageSFX/
+/Content/HorrorThriller_Music_Loops/
+/Content/M1911/
+/Content/MetaHumans/
+/Content/MonsterRoarsAndGrowls/
+/Content/PostApocalypticSandbox/
+/Content/SoundsOfHorror/
+/Content/Thunder_Sounds/
+/Content/Vefects/
+/Content/ZombieAnimationPack/
+/Content/ZombieFemale/
+
+# Made from pack content: retargeted animations, and sounds layered with pack samples
+/Content/Zombies/Animations/
+/Content/Game/Character/FirstPerson/Pistol/AS_*.uasset
+/Content/Zombies/Audio/Impacts/SW_FleshHit_*.uasset
+/Content/Zombies/Audio/Impacts/SW_HeadHit_*.uasset
+/Content/Zombies/Audio/Impacts/SW_KillThunk.uasset
+
+# Editor scratch
+/Content/Collections/
+/Content/Developers/
