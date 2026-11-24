@@ -109,10 +109,10 @@ protected:
 	float BobFrequency = 0.55f;
 
 	UPROPERTY(EditAnywhere, Category = "Springs", meta = (ClampMin = "0"))
-	float KickStiffness = 260.f;
+	float KickStiffness = 520.f;
 
 	UPROPERTY(EditAnywhere, Category = "Springs", meta = (ClampMin = "0"))
-	float KickDamping = 26.f;
+	float KickDamping = 36.f;
 
 	UPROPERTY(EditAnywhere, Category = "Springs", meta = (ClampMin = "0"))
 	float DipStiffness = 140.f;

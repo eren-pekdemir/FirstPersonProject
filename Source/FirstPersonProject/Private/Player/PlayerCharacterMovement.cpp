@@ -12,6 +12,7 @@
 #include "Gun/GunBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "Player/CameraFeelComponent.h"
+#include "Player/ViewmodelComponent.h"
 
 namespace PlayerMovement
 {
@@ -31,6 +32,7 @@ namespace PlayerMovement
 	constexpr float MinLandingFeedbackSpeed = 350.f;
 
 	constexpr float LandingDipStrength = 260.f;
+	constexpr float ViewmodelLandingDip = 110.f;
 	constexpr float SlideStartDip = 90.f;
 	constexpr float MantleDip = 110.f;
 	constexpr float MantleRollImpulse = 35.f;
@@ -103,6 +105,16 @@ void APlayerCharacter::UpdateCameraFeel()
 	}
 
 	CameraFeel->SetState(State);
+
+	FViewmodelState ViewState;
+	ViewState.Speed = State.Speed;
+	ViewState.MoveInput = LastMoveInput;
+	ViewState.bGrounded = State.bGrounded;
+	ViewState.bSliding = bIsSliding;
+	ViewState.bAiming = bIsAiming;
+	ViewState.bLowered = IsTraversing();
+	ViewState.AimSpeed = State.AimSpeed;
+	Viewmodel->SetState(ViewState);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -183,6 +195,8 @@ void APlayerCharacter::Landed(const FHitResult& Hit)
 		{
 			CameraFeel->AddDip(Strength * PlayerMovement::LandingDipStrength);
 		}
+
+		Viewmodel->AddDip(Strength * PlayerMovement::ViewmodelLandingDip);
 
 		PlaySoundAtFeet(LandSound, FMath::Lerp(0.4f, 1.f, Strength));
 

@@ -1,16 +1,20 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "Player/TraversalComponent.h"
+#include "Player/ViewmodelComponent.h"
 #include "PlayerCharacter.generated.h"
 
 class AGunBase;
+class UCameraComponent;
 class UCameraFeelComponent;
+class UViewmodelComponent;
 class UCameraShakeBase;
 class UInputAction;
 class UInteractPromptWidget;
 class USoundBase;
+class USpotLightComponent;
 class UUserWidget;
 struct FGunShotResult;
 struct FInputActionValue;
@@ -91,6 +95,46 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Weapon")
 	TObjectPtr<AGunBase> CurrentGun;
 
+	// ---------------------------------------------------------------------------------------------
+	// Health (PlayerCharacterHealth.cpp)
+
+	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
+
+	UFUNCTION(BlueprintPure, Category = "Health")
+	float GetHealthPercent() const { return MaxHealth > 0.f ? Health / MaxHealth : 0.f; }
+
+	UFUNCTION(BlueprintPure, Category = "Health")
+	bool IsDead() const { return bDead; }
+
+	/** Back to full health (between waves) */
+	void RestoreHealth();
+
+	/** Heals by Amount. Returns false when already at full health. */
+	bool AddHealth(float Amount);
+
+	/** Charges the flashlight battery by a fraction of a full one. Returns false when already full. */
+	bool AddBattery(float Fraction);
+
+	UFUNCTION(BlueprintPure, Category = "Flashlight")
+	float GetBatteryPercent() const { return Battery; }
+
+	bool IsFlashlightOn() const;
+
+	/** Short message on the HUD (a picked up item) */
+	void ShowPickupMessage(const FString& Text, const FLinearColor& Color);
+
+	const FString& GetPickupMessage() const { return PickupMessage; }
+	const FLinearColor& GetPickupMessageColor() const { return PickupMessageColor; }
+	float GetTimeSincePickupMessage() const;
+
+	/** 1 right after being hurt, fading to 0, for the HUD */
+	float GetDamageFlash() const;
+
+	/** Where the last hit came from, as a yaw relative to the view (degrees), for the HUD indicator */
+	float GetDamageDirectionYaw() const;
+
+	float GetTimeSinceDamaged() const;
+
 protected:
 
 	virtual void BeginPlay() override;
@@ -105,6 +149,21 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UTraversalComponent> Traversal;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UViewmodelComponent> Viewmodel;
+
+	/** First person arms holding the weapon, only visible to the owner. Driven by Viewmodel. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USkeletalMeshComponent> FirstPersonArms;
+
+	/** Gloves or sleeves following the arms pose */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USkeletalMeshComponent> FirstPersonGloves;
+
+	/** Meshes and default animation of the first person arms */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "First Person")
+	FFirstPersonArmsSetup ArmsSetup;
 
 	// ---------------------------------------------------------------------------------------------
 	// Weapons
@@ -272,7 +331,77 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSubclassOf<UInteractPromptWidget> InteractPromptWidgetClass;
 
+	// ---------------------------------------------------------------------------------------------
+	// Health
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Health", meta = (ClampMin = "1"))
+	float MaxHealth = 100.f;
+
+	/** Seconds without damage before health comes back */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Health", meta = (ClampMin = "0", Units = "s"))
+	float RegenDelay = 5.f;
+
+	/** Health per second once regenerating */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Health", meta = (ClampMin = "0"))
+	float RegenRate = 12.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Health")
+	TArray<TObjectPtr<USoundBase>> HurtSounds;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Health")
+	TObjectPtr<USoundBase> DeathSound;
+
+	/** Heartbeat looping while health is low */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Health")
+	TObjectPtr<USoundBase> LowHealthSound;
+
+	// ---------------------------------------------------------------------------------------------
+	// Flashlight
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USpotLightComponent> Flashlight;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Flashlight")
+	TObjectPtr<USoundBase> FlashlightClickSound;
+
+	/** Seconds a full battery lasts with the light on */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Flashlight", meta = (ClampMin = "1", Units = "s"))
+	float BatteryLife = 200.f;
+
+	/** Charge under which the light dims and keeps failing */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Flashlight", meta = (ClampMin = "0", ClampMax = "1"))
+	float LowBatteryFraction = 0.25f;
+
+	/** Played when the battery dies */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Flashlight")
+	TObjectPtr<USoundBase> BatteryDeadSound;
+
 private:
+
+	// Health (PlayerCharacterHealth.cpp) ------------------------------------------------------------
+
+	void UpdateHealth(float DeltaTime);
+	void Die();
+	void ToggleFlashlight();
+	void UpdateFlashlight(float DeltaTime);
+
+	float Health = 100.f;
+	bool bDead = false;
+	float LastDamageTime = -100.f;
+	FVector LastDamageOrigin = FVector::ZeroVector;
+	float FlashlightFlickerTime = 0.f;
+	float FlashlightBaseIntensity = 0.f;
+
+	/** Flashlight charge, 0..1 */
+	float Battery = 1.f;
+
+	FString PickupMessage;
+	FLinearColor PickupMessageColor = FLinearColor::White;
+	float PickupMessageTime = -100.f;
+
+	UPROPERTY()
+	TObjectPtr<class UAudioComponent> LowHealthAudio;
+
 
 	// Core (PlayerCharacter.cpp) -----------------------------------------------------------------
 
@@ -355,6 +484,37 @@ private:
 	void TryReload();
 
 	bool CanUseWeapon() const;
+
+	// Debug (PlayerCharacterDebug.cpp) -----------------------------------------------------------
+
+	/** With -ViewmodelCapture on the command line: equips every weapon in the level and takes screenshots of each pose */
+	void StartViewmodelCapture();
+	void RunViewmodelCaptureStep();
+
+	int32 ViewmodelCaptureStep = 0;
+	FTimerHandle ViewmodelCaptureTimer;
+
+	/** Debug view from outside the head, to check how the hands hold the weapon */
+	void SetOutsideView(bool bOutside, float SideOffset = -110.f);
+	TWeakObjectPtr<AActor> OutsideViewCamera;
+
+	/** With -FeelCapture: scripted look, move, sprint and fire sequence with screenshots and a per frame log */
+	void StartFeelCapture();
+
+	/** With -ZombieCapture: fights the waves by itself (aims at the nearest zombie and fires), logs the horde and takes screenshots */
+	void TickZombieCapture(float DeltaTime);
+	bool bZombieCapture = false;
+	float ZombieCaptureTime = 0.f;
+	int32 ZombieCaptureShot = 0;
+	float ZombieCaptureLogTimer = 0.f;
+	void TickFeelCapture(float DeltaTime);
+	int32 FindWeaponSlot(const TCHAR* ClassNamePart) const;
+
+	bool bFeelCapture = false;
+	int32 FeelSegment = 0;
+	int32 FeelShot = 0;
+	float FeelTime = 0.f;
+	float FeelTotalTime = 0.f;
 
 	// State ---------------------------------------------------------------------------------------
 

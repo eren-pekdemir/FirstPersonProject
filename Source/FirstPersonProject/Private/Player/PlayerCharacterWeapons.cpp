@@ -2,6 +2,7 @@
 
 #include "Player/PlayerCharacter.h"
 
+#include "Blueprint/UserWidget.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Data/WeaponDataAsset.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -9,6 +10,7 @@
 #include "InputActionValue.h"
 #include "Kismet/GameplayStatics.h"
 #include "Player/CameraFeelComponent.h"
+#include "Player/ViewmodelComponent.h"
 #include "TimerManager.h"
 
 namespace PlayerWeapons
@@ -81,6 +83,7 @@ void APlayerCharacter::PickUpGun(AGunBase* NewGun)
 		if (Replaced == CurrentGun)
 		{
 			CurrentGun = nullptr;
+			Viewmodel->ClearWeapon();
 		}
 
 		DropGun(Replaced, DropTransform);
@@ -121,6 +124,7 @@ void APlayerCharacter::EquipSlot(int32 SlotIndex)
 	CurrentGun = Weapons[SlotIndex];
 	CurrentGun->SetHolstered(false);
 	CurrentGun->OnEquipped();
+	Viewmodel->SetWeapon(CurrentGun);
 
 	if (const UWeaponDataAsset* WeaponData = CurrentGun->GetWeaponData())
 	{
@@ -143,9 +147,12 @@ void APlayerCharacter::EquipSlot(int32 SlotIndex)
 void APlayerCharacter::AttachGunToHand(AGunBase* Gun)
 {
 	const UWeaponDataAsset* WeaponData = Gun->GetWeaponData();
-	const FName AttachSocket = WeaponData ? WeaponData->AttachSocketName : FName(TEXT("WeaponSocket"));
+	const FName AttachSocket = UViewmodelComponent::GetWeaponSocket(WeaponData);
 
-	Gun->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetIncludingScale, AttachSocket);
+	// The owner sees the weapon in the first person arms, rendered with the viewmodel FOV
+	USkeletalMeshComponent* Hands = FirstPersonArms ? FirstPersonArms.Get() : GetMesh();
+	Gun->AttachToComponent(Hands, FAttachmentTransformRules::SnapToTargetIncludingScale, AttachSocket);
+	Gun->SetFirstPersonView(Hands == FirstPersonArms);
 
 	if (WeaponData && !WeaponData->AttachOffset.Equals(FTransform::Identity))
 	{
@@ -168,6 +175,7 @@ void APlayerCharacter::DropGun(AGunBase* Gun, const FTransform& DropTransform)
 	}
 
 	Gun->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	Gun->SetFirstPersonView(false);
 	Gun->SetActorTransform(DropTransform);
 	Gun->SetHeld(false);
 	Gun->SetOwner(nullptr);
@@ -228,6 +236,8 @@ void APlayerCharacter::HandleGunFired(const AGunBase& Gun)
 	{
 		return;
 	}
+
+	Viewmodel->OnFired(bIsAiming);
 
 	const float Multiplier = bIsAiming ? WeaponData->AimRecoilMultiplier : 1.f;
 	CameraFeel->AddRecoilKick(WeaponData->CameraKick * Multiplier, WeaponData->FOVKick * Multiplier);
@@ -358,6 +368,12 @@ void APlayerCharacter::UpdateAiming()
 		{
 			UGameplayStatics::PlaySound2D(this, AimSound, 0.6f);
 		}
+	}
+
+	if (CrosshairWidget && bNewAiming != bIsAiming)
+	{
+		// Aiming down sights uses the weapon's own sights
+		CrosshairWidget->SetVisibility(bNewAiming ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
 	}
 
 	bIsAiming = bNewAiming;

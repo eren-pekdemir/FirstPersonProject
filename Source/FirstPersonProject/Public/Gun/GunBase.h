@@ -1,10 +1,15 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "GunBase.generated.h"
 
+class APawn;
 class APlayerController;
+class UAnimMontage;
+class UBoxComponent;
+class USkeletalMeshComponent;
+class UPointLightComponent;
 class USoundBase;
 class UStaticMeshComponent;
 class UWeaponDataAsset;
@@ -69,6 +74,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	bool IsHeld() const { return bIsHeld; }
 
+	USkeletalMeshComponent* GetViewMesh() const { return ViewMesh; }
+
+	/** Renders the weapon and its effects as first person geometry (viewmodel FOV, no clipping into walls) */
+	void SetFirstPersonView(bool bNewFirstPersonView);
+
 	void SetAiming(bool bNewAiming) { bIsAiming = bNewAiming; }
 
 	UFUNCTION(BlueprintPure, Category = "Weapon")
@@ -80,6 +90,9 @@ public:
 	/** 0..1 progress of the current reload */
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	float GetReloadProgress() const;
+
+	/** Length of the reload in progress */
+	float GetReloadDuration() const { return ReloadDuration; }
 
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	int32 GetAmmoInMagazine() const { return AmmoInMagazine; }
@@ -116,6 +129,24 @@ protected:
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	/** Animated weapon from the weapon data (ViewMesh). When set it replaces the static meshes, in the hands and in the world. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USkeletalMeshComponent> ViewMesh;
+
+	/** Box around the weapon used to find it with the interaction trace, whatever collision the mesh has */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UBoxComponent> PickupCollision;
+
+	/** Short flash of light on every shot */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UPointLightComponent> MuzzleLight;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Feedback", meta = (ClampMin = "0", Units = "cd"))
+	float MuzzleLightIntensity = 20.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Feedback", meta = (ClampMin = "0", Units = "s"))
+	float MuzzleLightDuration = 0.05f;
+
 	/** Moving part kicked back on every shot (pistol slide, rifle bolt...) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> SlideMesh;
@@ -136,7 +167,52 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Feedback", meta = (ClampMin = "0"))
 	float ShootParticleScale = 1.f;
 
+	/** Muzzle flash and smoke are made for third person distances: scale them down in first person */
+	UPROPERTY(EditDefaultsOnly, Category = "Feedback", meta = (ClampMin = "0"))
+	float FirstPersonEffectScale = 0.3f;
+
+	/** Extra muzzle effect scale while aiming down sights */
+	UPROPERTY(EditDefaultsOnly, Category = "Feedback", meta = (ClampMin = "0", ClampMax = "1"))
+	float AimEffectScale = 0.5f;
+
 private:
+
+	/** Turns the owner's view by an exact amount of degrees */
+	static void AddViewRotation(APawn& OwnerPawn, const FRotator& Delta);
+
+	/** Shows the animated view mesh instead of the static meshes when the weapon data has one */
+	void SetupViewMesh();
+
+	bool UsesViewMesh() const;
+
+	/** Component and socket the muzzle effects start from */
+	USceneComponent* GetMuzzleComponent(FName& OutSocket) const;
+
+	/**
+	 *  Where the muzzle appears on screen. First person geometry is drawn with its own FOV and pulled toward the camera,
+	 *  so world space effects (tracers) must start from this point to line up with the weapon the player sees.
+	 */
+	FVector GetVisualMuzzleLocation() const;
+
+	/** Plays a montage on the animated weapon (bolt, magazine, pump) */
+	void PlayViewMontage(UAnimMontage* Montage, float FitDuration = 0.f) const;
+
+	/** Lays the view mesh on its side on the ground below the actor, and fits the pickup box around it */
+	void RestOnGround();
+
+	/** Fits the pickup box around the visible meshes */
+	void FitPickupCollision();
+
+	void UpdateMuzzleLight(float DeltaTime);
+
+	/** Scale of muzzle effects for the current view mode (first person, aiming) */
+	float GetFirstPersonEffectScale() const;
+
+	/** Applies the current first person view mode to a component spawned for this weapon (muzzle flash, smoke) */
+	void ApplyFirstPersonView(UPrimitiveComponent* Component) const;
+
+	bool bFirstPersonView = false;
+	float MuzzleLightTimeLeft = 0.f;
 
 	/** Fires a single shot: traces, damage, FX, recoil and spread */
 	void Fire();

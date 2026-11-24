@@ -1,12 +1,18 @@
-﻿#include "Player/PlayerCharacter.h"
+#include "Player/PlayerCharacter.h"
+
+#include "Components/SpotLightComponent.h"
+#include "Misc/CommandLine.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Camera/CameraComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "EnhancedInputComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Gun/GunBase.h"
 #include "InputActionValue.h"
 #include "Player/CameraFeelComponent.h"
+#include "Player/ViewmodelComponent.h"
 #include "TimerManager.h"
 #include "UI/InteractPromptWidget.h"
 
@@ -16,6 +22,33 @@ APlayerCharacter::APlayerCharacter()
 
 	CameraFeel = CreateDefaultSubobject<UCameraFeelComponent>(TEXT("CameraFeel"));
 	Traversal = CreateDefaultSubobject<UTraversalComponent>(TEXT("Traversal"));
+	Viewmodel = CreateDefaultSubobject<UViewmodelComponent>(TEXT("Viewmodel"));
+
+	FirstPersonArms = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("FirstPersonArms"));
+	FirstPersonArms->SetupAttachment(GetMesh());
+	FirstPersonArms->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	FirstPersonArms->SetCastShadow(false);
+	FirstPersonArms->SetOnlyOwnerSee(true);
+
+	FirstPersonGloves = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("FirstPersonGloves"));
+	FirstPersonGloves->SetupAttachment(FirstPersonArms);
+	FirstPersonGloves->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	FirstPersonGloves->SetCastShadow(false);
+	FirstPersonGloves->SetOnlyOwnerSee(true);
+
+	// Flashlight held next to the weapon: the main light in the dark
+	Flashlight = CreateDefaultSubobject<USpotLightComponent>(TEXT("Flashlight"));
+	Flashlight->SetupAttachment(GetRootComponent());
+	Flashlight->SetIntensityUnits(ELightUnits::Lumens);
+	Flashlight->SetIntensity(650.f);
+	// Only a faint beam in the fog, otherwise the haze washes the screen out
+	Flashlight->SetVolumetricScatteringIntensity(0.2f);
+	Flashlight->SetInnerConeAngle(14.f);
+	Flashlight->SetOuterConeAngle(30.f);
+	Flashlight->SetAttenuationRadius(3200.f);
+	Flashlight->SetLightColor(FLinearColor(1.f, 0.93f, 0.82f));
+	Flashlight->SetCastShadows(true);
+	Flashlight->SetVisibility(true);
 
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	Movement->NavAgentProps.bCanCrouch = true;
@@ -43,6 +76,17 @@ void APlayerCharacter::BeginPlay()
 	SavedBrakingDeceleration = Movement->BrakingDecelerationWalking;
 	SavedMaxAcceleration = Movement->MaxAcceleration;
 
+	Viewmodel->Initialize(FirstPersonArms, FirstPersonGloves, FindComponentByClass<UCameraComponent>(), GetMesh(), ArmsSetup);
+
+	Health = MaxHealth;
+	if (UCameraComponent* Camera = FindComponentByClass<UCameraComponent>())
+	{
+		// Slightly right of and below the eye, like a light taped to the gun, so shadows show
+		Flashlight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		Flashlight->SetRelativeLocation(FVector(10.f, 18.f, -14.f));
+	}
+	FlashlightBaseIntensity = Flashlight->Intensity;
+
 	Traversal->OnTraversalStarted.AddUObject(this, &APlayerCharacter::OnTraversalStarted);
 	Traversal->OnTraversalEnded.AddUObject(this, &APlayerCharacter::OnTraversalEnded);
 
@@ -51,6 +95,9 @@ void APlayerCharacter::BeginPlay()
 	if (IsLocallyControlled())
 	{
 		CreateHUDWidgets();
+		StartViewmodelCapture();
+		StartFeelCapture();
+		bZombieCapture = FParse::Param(FCommandLine::Get(), TEXT("ZombieCapture"));
 	}
 }
 
@@ -70,6 +117,24 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	if (bFeelCapture)
+	{
+		TickFeelCapture(DeltaTime);
+	}
+
+	if (bZombieCapture)
+	{
+		TickZombieCapture(DeltaTime);
+	}
+
+	UpdateHealth(DeltaTime);
+	UpdateFlashlight(DeltaTime);
+
+	if (bDead)
+	{
+		return;
+	}
 
 	UpdateMovement(DeltaTime);
 	UpdateAiming();
@@ -134,6 +199,8 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	BindPressRelease(SprintAction, &APlayerCharacter::OnSprintPressed, &APlayerCharacter::OnSprintReleased);
 	BindPressRelease(CrouchAction, &APlayerCharacter::OnCrouchPressed, &APlayerCharacter::OnCrouchReleased);
 	BindPressRelease(InteractAction, &APlayerCharacter::OnInteractPressed, nullptr);
+
+	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &APlayerCharacter::ToggleFlashlight);
 
 	for (int32 SlotIndex = 0; SlotIndex < SelectWeaponActions.Num(); ++SlotIndex)
 	{
